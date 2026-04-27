@@ -35,23 +35,23 @@ class DashboardController extends Controller
             ->get();
 
         // Monthly trend — last 12 months or based on period filter
+        // Group in PHP so the endpoint works on both MySQL and PostgreSQL.
         $trendMonths = $days > 0 ? max(1, (int) ceil($days / 30)) : 12;
         $monthlyTrend = Applicant::query()
-            ->select(
-                DB::raw('YEAR(created_at) as yr'),
-                DB::raw('MONTH(created_at) as mo'),
-                DB::raw('count(*) as total')
-            )
+            ->select('created_at')
             ->where('created_at', '>=', now()->subMonths($trendMonths)->startOfMonth())
-            ->groupBy('yr', 'mo')
-            ->orderBy('yr')
-            ->orderBy('mo')
+            ->orderBy('created_at')
             ->get()
-            ->map(function ($row) {
-                $label = \Carbon\Carbon::createFromDate($row->yr, $row->mo, 1)
-                    ->format('M Y');
-                return ['month' => $label, 'total' => (int) $row->total];
-            });
+            ->groupBy(function ($row) {
+                return $row->created_at->format('M Y');
+            })
+            ->map(function ($rows, $month) {
+                return [
+                    'month' => $month,
+                    'total' => $rows->count(),
+                ];
+            })
+            ->values();
 
         // By vacancy source
         $bySource = $query()
