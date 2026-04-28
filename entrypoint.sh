@@ -14,6 +14,11 @@ if [ -z "$APP_KEY" ]; then
 fi
 
 # Run migrations (retry loop for DB readiness)
+# Clear and cache config so env changes (from Railway) are applied
+php artisan config:clear || true
+php artisan cache:clear || true
+php artisan config:cache || true
+
 if [ "$DB_CONNECTION" != "sqlite" ]; then
   MAX_TRIES=15
   i=0
