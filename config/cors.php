@@ -32,6 +32,8 @@ return [
 
     'max_age' => 86400,  // 24 h preflight cache
 
-    'supports_credentials' => false,
+    // Allow sending cookies/credentials for first-party SPA auth (Sanctum).
+    // Requires `FRONTEND_URL` and `SANCTUM_STATEFUL_DOMAINS` to be set in env.
+    'supports_credentials' => true,
 
 ];
