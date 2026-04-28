@@ -28,11 +28,9 @@ COPY . .
 # Install dependencies
 RUN composer install --no-dev --optimize-autoloader
 
-# Generate APP_KEY if not exists
-RUN php artisan key:generate --force || true
-
-# Run migrations
-RUN php artisan migrate --force || true
+# Copy entrypoint and make executable
+COPY ./entrypoint.sh /var/www/entrypoint.sh
+RUN chmod +x /var/www/entrypoint.sh
 
 # Create cache directories
 RUN mkdir -p storage/framework/cache storage/framework/views storage/logs && \
@@ -40,4 +38,5 @@ RUN mkdir -p storage/framework/cache storage/framework/views storage/logs && \
 
 EXPOSE 8000
 
+ENTRYPOINT ["/bin/sh", "/var/www/entrypoint.sh"]
 CMD ["php", "-d", "variables_order=EGPCS", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
