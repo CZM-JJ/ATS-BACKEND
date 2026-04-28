@@ -39,4 +39,5 @@ RUN mkdir -p storage/framework/cache storage/framework/views storage/logs && \
 EXPOSE 8000
 
 ENTRYPOINT ["/bin/sh", "/var/www/entrypoint.sh"]
-CMD ["php", "-d", "variables_order=EGPCS", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+# Use the PORT env var provided by Railway (fallback to 8000)
+CMD ["sh", "-c", "php -d variables_order=EGPCS artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]
