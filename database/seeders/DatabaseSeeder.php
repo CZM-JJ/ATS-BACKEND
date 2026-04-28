@@ -7,7 +7,6 @@ use App\Models\Position;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\Hash;
 
 class DatabaseSeeder extends Seeder
 {
@@ -18,18 +17,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        User::factory()->create([
-            'name' => 'Admin User',
-            'email' => 'admin@example.com',
-            'role' => 'admin',
-            'password' => Hash::make('Admin@2026Secure!'),
-        ]);
+        $this->call(AdminUserSeeder::class);
 
         User::factory()->create([
             'name' => 'Recruiter User',
             'email' => 'recruiter@example.com',
             'role' => 'recruiter',
-            'password' => Hash::make('Recruit@2026Secure!'),
+            'password' => bcrypt('Recruit@2026Secure!'),
         ]);
 
         Position::query()->create([
