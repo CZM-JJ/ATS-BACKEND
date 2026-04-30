@@ -4,7 +4,7 @@ Laravel API for the Applicant Tracking System.
 
 ## Production target
 
-The backend is intended to run on Laravel Cloud with the frontend on Vercel. Railway is no longer the recommended production target.
+The backend is intended to run on Laravel Cloud with the frontend on Vercel.
 
 See [LARAVEL_CLOUD.md](LARAVEL_CLOUD.md) for the current deployment guide.
 
