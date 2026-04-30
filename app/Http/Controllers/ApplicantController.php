@@ -170,13 +170,14 @@ class ApplicantController extends Controller
     {
         $previousStatus = $applicant->status;
         $data = $this->validateApplicant($request, true);
+        $cvDisk = $this->cvDisk();
 
         if ($request->hasFile('upload_cv')) {
             if ($applicant->cv_path) {
-                Storage::disk('public')->delete($applicant->cv_path);
+                Storage::disk($cvDisk)->delete($applicant->cv_path);
             }
 
-            $data['cv_path'] = $request->file('upload_cv')->store('cvs', 'public');
+            $data['cv_path'] = $request->file('upload_cv')->store('cvs', $cvDisk);
         }
 
         unset($data['upload_cv']);
@@ -276,7 +277,7 @@ class ApplicantController extends Controller
         $applicantId = $applicant->id;
 
         if ($applicant->cv_path) {
-            Storage::disk('public')->delete($applicant->cv_path);
+            Storage::disk($this->cvDisk())->delete($applicant->cv_path);
         }
 
         $applicant->forceDelete();
@@ -298,10 +299,12 @@ class ApplicantController extends Controller
             ->whereIn('id', $request->input('ids'))
             ->get();
 
+        $cvDisk = $this->cvDisk();
+
         foreach ($applicants as $applicant) {
             $fullName = $applicant->last_name . ', ' . $applicant->first_name;
             if ($applicant->cv_path) {
-                Storage::disk('public')->delete($applicant->cv_path);
+                Storage::disk($cvDisk)->delete($applicant->cv_path);
             }
             $applicant->forceDelete();
             AuditLog::log('force_delete', 'applicant', $applicant->id, $fullName,
@@ -314,22 +317,30 @@ class ApplicantController extends Controller
     public function cvDownload(int $applicantId)
     {
         $applicant = Applicant::withTrashed()->findOrFail($applicantId);
+        $cvDisk = Storage::disk($this->cvDisk());
 
         if (!$applicant->cv_path) {
             return response()->json(['message' => 'No CV uploaded for this applicant.'], 404);
         }
 
-        if (!Storage::disk('public')->exists($applicant->cv_path)) {
+        if (!$cvDisk->exists($applicant->cv_path)) {
             return response()->json(['message' => 'CV file not found on storage.'], 404);
         }
 
-        $fullPath  = Storage::disk('public')->path($applicant->cv_path);
-        $mimeType  = Storage::disk('public')->mimeType($applicant->cv_path);
+        $mimeType  = $cvDisk->mimeType($applicant->cv_path) ?: 'application/octet-stream';
         $extension = pathinfo($applicant->cv_path, PATHINFO_EXTENSION);
         $filename  = $applicant->last_name . '_' . $applicant->first_name . '_CV.' . $extension;
+        $stream = $cvDisk->readStream($applicant->cv_path);
 
-        return response()->file($fullPath, [
-            'Content-Type'        => $mimeType,
+        if (!is_resource($stream)) {
+            return response()->json(['message' => 'Unable to read CV from storage.'], 500);
+        }
+
+        return response()->stream(function () use ($stream): void {
+            fpassthru($stream);
+            fclose($stream);
+        }, 200, [
+            'Content-Type' => $mimeType,
             'Content-Disposition' => 'inline; filename="' . $filename . '"',
         ]);
     }
@@ -438,7 +449,7 @@ class ApplicantController extends Controller
         $data['age'] = \Carbon\Carbon::parse($data['birthdate'])->age;
 
         if ($request->hasFile('upload_cv')) {
-            $data['cv_path'] = $request->file('upload_cv')->store('cvs', 'public');
+            $data['cv_path'] = $request->file('upload_cv')->store('cvs', $this->cvDisk());
         }
 
         unset($data['upload_cv']);
@@ -474,6 +485,11 @@ class ApplicantController extends Controller
             'rejected',
             'withdrawn',
         ];
+    }
+
+    private function cvDisk(): string
+    {
+        return (string) config('filesystems.cv_disk', 'public');
     }
 
 }
