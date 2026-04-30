@@ -14,7 +14,7 @@ if [ -z "$APP_KEY" ]; then
 fi
 
 # Run migrations (retry loop for DB readiness)
-# Clear and cache config so env changes (from Railway) are applied
+# Clear and cache config so env changes from the platform are applied
 php artisan config:clear || true
 php artisan cache:clear || true
 php artisan config:cache || true

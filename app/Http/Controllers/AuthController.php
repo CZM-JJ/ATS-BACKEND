@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 
@@ -37,10 +38,23 @@ class AuthController extends Controller
                 "User '{$user->name}' logged in",
                 $user->id, $user->name);
 
+            $cookieName = config('app.auth_token_cookie', 'ats_auth_token');
+            $isProduction = app()->environment('production');
+
             return response()->json([
                 'token' => $token,
                 'user'  => $user,
-            ]);
+            ])->cookie(
+                $cookieName,
+                $token,
+                8 * 60,
+                '/',
+                null,
+                $isProduction,
+                true,
+                false,
+                $isProduction ? 'none' : 'lax'
+            );
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -63,7 +77,12 @@ class AuthController extends Controller
 
         $user->currentAccessToken()?->delete();
 
-        return response()->noContent();
+        $cookieName = config('app.auth_token_cookie', 'ats_auth_token');
+        $isProduction = app()->environment('production');
+
+        return response()->noContent()->withCookie(
+            Cookie::forget($cookieName, '/', null, $isProduction)
+        );
     }
 
     public function me(Request $request)

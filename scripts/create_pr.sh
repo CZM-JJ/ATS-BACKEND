@@ -3,11 +3,11 @@ git push -u origin $BRANCH
 #!/bin/sh
 set -e
 
-# Script to create a branch with the Railway changes and push to origin.
+# Script to create a branch with the deployment changes and push to origin.
 # Run this from the repository root: ./scripts/create_pr.sh
 
-BRANCH=feature/railway-deploy
-MSG="ci: add Railway deployment entrypoint and GHCR publish workflow"
+BRANCH=feature/laravel-cloud-deploy
+MSG="ci: add Laravel Cloud deployment entrypoint and GHCR publish workflow"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Error: must run inside a git repository root"
@@ -23,7 +23,7 @@ else
   git checkout -b $BRANCH
 fi
 
-git add Dockerfile entrypoint.sh .dockerignore RAILWAY.md .github/workflows/publish-image.yml || true
+git add Dockerfile entrypoint.sh .dockerignore README.md LARAVEL_CLOUD.md .github/workflows/publish-image.yml || true
 
 if git diff --staged --quiet; then
   echo "No staged changes to commit. If you already committed, pushing branch..."

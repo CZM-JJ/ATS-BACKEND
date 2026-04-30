@@ -56,6 +56,8 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
 
+    'auth_token_cookie' => env('AUTH_TOKEN_COOKIE', 'ats_auth_token'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

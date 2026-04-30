@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
             'perm' => \App\Http\Middleware\CheckPermission::class,
+            'auth.cookie' => \App\Http\Middleware\AttachAuthTokenFromCookie::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
