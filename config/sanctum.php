@@ -42,27 +42,23 @@ return [
     |--------------------------------------------------------------------------
     |
     | This value controls the number of minutes until an issued token will be
-    | considered expired. This will override any values set in the token's
-    | "expires_at" attribute, but first-party sessions are not affected.
+    | considered expired. Set to null for no expiration (sessions control it).
+    | For production, consider setting a value like 1440 (24 hours).
     |
     */
 
-    'expiration' => null,
+    'expiration' => env('SANCTUM_TOKEN_EXPIRATION') ? (int)env('SANCTUM_TOKEN_EXPIRATION') : null,
 
     /*
     |--------------------------------------------------------------------------
     | Token Prefix
     |--------------------------------------------------------------------------
     |
-    | Sanctum can prefix new tokens in order to take advantage of numerous
-    | security scanning initiatives maintained by open source platforms
-    | that notify developers if they commit tokens into repositories.
-    |
-    | See: https://docs.github.com/en/code-security/secret-scanning/about-secret-scanning
+    | Sanctum can prefix new tokens for security scanning. Recommended: 'ATS'
     |
     */
 
-    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', ''),
+    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', 'ATS'),
 
     /*
     |--------------------------------------------------------------------------

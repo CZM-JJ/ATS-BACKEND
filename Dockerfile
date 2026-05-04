@@ -1,43 +1,61 @@
-FROM php:8.2-fpm
+FROM php:8.2-cli-alpine
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+WORKDIR /var/www
+
+# Install build dependencies
+RUN apk add --no-cache --virtual .build-deps \
+    build-base \
+    autoconf \
+    oniguruma-dev && \
+    apk add --no-cache \
     git \
     curl \
-    libpq-dev \
-    libonig-dev \
-    libxml2-dev \
+    postgresql-dev \
+    oniguruma \
     zip \
-    unzip
-
-# Clear cache
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_mysql mbstring exif pcntl bcmath
+    unzip \
+    libpq && \
+    docker-php-ext-install \
+    pdo \
+    pdo_mysql \
+    pdo_pgsql \
+    mbstring \
+    exif \
+    pcntl \
+    bcmath && \
+    apk del .build-deps
 
 # Install composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
 
-# Set working directory
-WORKDIR /var/www
+# Copy dependency files first (better caching)
+COPY composer.json composer.lock ./
+
+# Install PHP dependencies
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --optimize-autoloader \
+    --no-scripts
 
 # Copy application code
 COPY . .
 
-# Install dependencies
-RUN composer install --no-dev --optimize-autoloader
+# Run composer scripts post-install
+RUN composer run-script post-install-cmd || true
 
-# Copy entrypoint and make executable
-COPY ./entrypoint.sh /var/www/entrypoint.sh
-RUN chmod +x /var/www/entrypoint.sh
+# Copy and setup entrypoint
+COPY --chmod=755 entrypoint.sh .
 
-# Create cache directories
-RUN mkdir -p storage/framework/cache storage/framework/views storage/logs && \
-    chmod -R 777 storage bootstrap/cache
+# Create storage directories with proper permissions
+RUN mkdir -p \
+    storage/framework/cache \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache
 
 EXPOSE 8000
 
-ENTRYPOINT ["/bin/sh", "/var/www/entrypoint.sh"]
-# Use the PORT env var provided by the platform (fallback to 8000)
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["sh", "-c", "php -d variables_order=EGPCS artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]

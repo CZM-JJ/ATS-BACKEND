@@ -12,6 +12,15 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Trust proxies for Laravel Cloud - this is crucial for X-Forwarded-* headers
+        $middleware->trustProxies(at: env('TRUSTED_PROXIES', '*'));
+
+        // Add security headers
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+        ]);
+
+        // Register custom middleware
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
             'perm' => \App\Http\Middleware\CheckPermission::class,
@@ -19,5 +28,18 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Handle production exceptions gracefully
+        $exceptions->render(function (Exception $e) {
+            // Log all exceptions
+            if (!($e instanceof \Illuminate\Auth\AuthenticationException) 
+                && !($e instanceof \Illuminate\Auth\Access\AuthorizationException)
+                && !($e instanceof \Illuminate\Validation\ValidationException)) {
+                \Illuminate\Support\Facades\Log::error('Unhandled exception', [
+                    'exception' => get_class($e),
+                    'message' => $e->getMessage(),
+                    'path' => request()->path(),
+                    'method' => request()->method(),
+                ]);
+            }
+        });
     })->create();

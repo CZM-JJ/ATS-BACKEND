@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Database\Eloquent\Model;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -11,7 +12,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Use optimized queries in production
+        if ($this->app->environment('production')) {
+            Model::preventSilentlyFailingAttributes();
+            Model::preventAccessingMissingAttributes();
+        }
     }
 
     /**
@@ -19,6 +24,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Optimize for production
+        if ($this->app->environment('production')) {
+            // Use HTTPS URLs
+            if (config('app.url')) {
+                \Illuminate\Support\Facades\URL::forceScheme('https');
+                \Illuminate\Support\Facades\URL::forceRootUrl(config('app.url'));
+            }
+        }
     }
 }
+
