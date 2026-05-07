@@ -1,49 +1,55 @@
-FROM php:8.2-cli-alpine
+FROM php:8.2-fpm-alpine
 
 WORKDIR /var/www
 
-# Install build dependencies
 RUN apk add --no-cache --virtual .build-deps \
-    build-base \
+    $PHPIZE_DEPS \
     autoconf \
-    oniguruma-dev && \
-    apk add --no-cache \
-    git \
+    bash \
     curl \
+    git \
+    icu-dev \
+    libzip-dev \
+    libxml2-dev \
+    oniguruma-dev \
     postgresql-dev \
-    oniguruma \
+    sqlite-dev \
     zip \
     unzip \
-    libpq && \
-    docker-php-ext-install \
+    libpq \
+    && docker-php-ext-install \
+    intl \
+    mbstring \
     pdo \
     pdo_mysql \
     pdo_pgsql \
-    mbstring \
-    exif \
+    pdo_sqlite \
     pcntl \
-    bcmath && \
-    apk del .build-deps
+    bcmath \
+    xml \
+    zip \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del .build-deps
 
 # Install composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
-# Copy dependency files first (better caching)
+# Copy dependency files first for better caching
 COPY composer.json composer.lock ./
 
 # Install PHP dependencies
 RUN composer install \
     --no-dev \
     --no-interaction \
-    --optimize-autoloader \
-    --no-scripts
+    --optimize-autoloader
 
 # Copy application code
 COPY . .
 
-# Run composer scripts post-install
-RUN composer run-script post-install-cmd || true
+# Ensure permissions for runtime files
+RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache || true
 
 # Copy and setup entrypoint
 COPY --chmod=755 entrypoint.sh .

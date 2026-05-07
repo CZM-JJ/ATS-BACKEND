@@ -9,17 +9,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class CheckPermission
 {
-    /**
-     * Default permissions used when the settings table has no entry yet.
-     */
-    private const DEFAULTS = [
-        'canEdit'            => ['admin', 'hr_manager', 'hr_supervisor'],
-        'canDelete'          => ['admin', 'hr_manager', 'hr_supervisor'],
-        'canManagePositions' => ['admin', 'hr_manager', 'hr_supervisor'],
-        'canViewAnalytics'   => ['admin', 'hr_manager', 'hr_supervisor'],
-        'canManageUsers'     => ['admin'],
-    ];
-
     public function handle(Request $request, Closure $next, string $permission): Response
     {
         $user = $request->user();
@@ -28,8 +17,9 @@ class CheckPermission
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $permissions = Setting::get('permissions', self::DEFAULTS);
-        $allowed     = $permissions[$permission] ?? self::DEFAULTS[$permission] ?? [];
+        $defaults = config('applicants.permissions');
+        $permissions = Setting::get('permissions', $defaults);
+        $allowed = $permissions[$permission] ?? $defaults[$permission] ?? [];
 
         if (! in_array($user->role, $allowed, true)) {
             return response()->json([

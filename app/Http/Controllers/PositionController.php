@@ -4,16 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
 use App\Models\Position;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
 
 class PositionController extends Controller
 {
-    public function index()
+    public function index(): LengthAwarePaginator
     {
         return Position::query()->latest()->paginate(20);
     }
 
-    public function publicIndex()
+    public function publicIndex(): \Illuminate\Database\Eloquent\Collection
     {
         return Position::query()
             ->where('is_active', true)
@@ -21,14 +24,14 @@ class PositionController extends Controller
             ->get();
     }
 
-    public function all()
+    public function all(): \Illuminate\Database\Eloquent\Collection
     {
         return Position::query()
             ->orderBy('title')
             ->get(['id', 'title']);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $this->validatePosition($request);
 
@@ -40,12 +43,12 @@ class PositionController extends Controller
         return response()->json($position, 201);
     }
 
-    public function show(Position $position)
+    public function show(Position $position): Position
     {
         return $position;
     }
 
-    public function update(Request $request, Position $position)
+    public function update(Request $request, Position $position): Position
     {
         $data = $this->validatePosition($request, true);
 
@@ -57,7 +60,7 @@ class PositionController extends Controller
         return $position;
     }
 
-    public function destroy(Position $position)
+    public function destroy(Position $position): Response
     {
         $title = $position->title;
         $positionId = $position->id;

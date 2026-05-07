@@ -9,6 +9,8 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PositionController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ExportController;
+use App\Http\Controllers\AnalyticsController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth.cookie')->group(function (): void {
@@ -59,6 +61,26 @@ Route::middleware('auth.cookie')->group(function (): void {
 
         // Analytics - dynamic permission: canViewAnalytics
         Route::get('dashboard/overview', [DashboardController::class, 'overview'])
+            ->middleware('perm:canViewAnalytics');
+
+        // Export - dynamic permission: canViewAnalytics
+        Route::get('export/applicants', [ExportController::class, 'exportApplicants'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('export/applicants/preview', [ExportController::class, 'getExportPreview'])
+            ->middleware('perm:canViewAnalytics');
+
+        // Analytics - dynamic permission: canViewAnalytics
+        Route::get('analytics/pipeline', [AnalyticsController::class, 'getPipelineMetrics'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('analytics/sources', [AnalyticsController::class, 'getCandidateSourceAnalytics'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('analytics/performance', [AnalyticsController::class, 'getHiringPerformance'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('analytics/time-to-hire', [AnalyticsController::class, 'getTimeToHire'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('analytics/dashboard', [AnalyticsController::class, 'getDashboard'])
+            ->middleware('perm:canViewAnalytics');
+        Route::get('analytics/date-range', [AnalyticsController::class, 'getByDateRange'])
             ->middleware('perm:canViewAnalytics');
 
         // Positions - dynamic permission: canManagePositions

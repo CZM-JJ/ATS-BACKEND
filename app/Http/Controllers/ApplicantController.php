@@ -7,7 +7,10 @@ use App\Models\Applicant;
 use App\Models\User;
 use App\Notifications\ApplicantSubmitted;
 use App\Notifications\ApplicantSubmissionReceived;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
@@ -15,17 +18,244 @@ use Illuminate\Validation\Rule;
 
 class ApplicantController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request): LengthAwarePaginator
     {
         $query = Applicant::query();
 
+        $this->applyArchivedFilter($query, $request);
+        $this->applySearchFilter($query, $request);
+        $this->applyStatusFilter($query, $request);
+        $this->applyFieldFilters($query, $request);
+        $this->applyDateFilters($query, $request);
+
+        return $this->applySorting($query, $request);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $applicant = $this->createApplicant($request, false);
+
+        AuditLog::log('create', 'applicant', $applicant->id,
+            $applicant->last_name . ', ' . $applicant->first_name,
+            "Created applicant '{$applicant->last_name}, {$applicant->first_name}'");
+
+        return response()->json($applicant, 201);
+    }
+
+    public function storePublic(Request $request): JsonResponse
+    {
+        $antiSpamResponse = $this->runPublicAntiSpamChecks($request);
+        if ($antiSpamResponse !== null) {
+            return $antiSpamResponse;
+        }
+
+        $applicant = $this->createApplicant($request, true);
+
+        return response()->json($applicant, 201);
+    }
+
+    public function show(Applicant $applicant): Applicant
+    {
+        return $applicant;
+    }
+
+    public function update(Request $request, Applicant $applicant): Applicant
+    {
+        $previousStatus = $applicant->status;
+        $data = $this->validateApplicant($request, true);
+        $cvDisk = $this->cvDisk();
+
+        if ($request->hasFile('upload_cv')) {
+            if ($applicant->cv_path) {
+                Storage::disk($cvDisk)->delete($applicant->cv_path);
+            }
+
+            $data['cv_path'] = $request->file('upload_cv')->store('cvs', $cvDisk);
+        }
+
+        unset($data['upload_cv']);
+
+        $applicant->update($data);
+
+        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+
+        if ($previousStatus !== $applicant->status) {
+            AuditLog::log('status_change', 'applicant', $applicant->id, $fullName,
+                "Status changed: {$previousStatus} → {$applicant->status} for '{$fullName}'");
+        } else {
+            AuditLog::log('update', 'applicant', $applicant->id, $fullName,
+                "Updated applicant '{$fullName}'");
+        }
+
+        return $applicant;
+    }
+
+    public function destroy(Applicant $applicant): Response
+    {
+        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+        $applicantId = $applicant->id;
+
+        $applicant->delete();
+
+        AuditLog::log('archive', 'applicant', $applicantId, $fullName,
+            "Archived applicant '{$fullName}'");
+
+        return response()->noContent();
+    }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer', 'exists:applicants,id'],
+        ]);
+
+        $applicants = Applicant::whereIn('id', $request->input('ids'))->get();
+
+        foreach ($applicants as $applicant) {
+            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+            $applicant->delete();
+            AuditLog::log('archive', 'applicant', $applicant->id, $fullName,
+                "Bulk-archived applicant '{$fullName}'");
+        }
+
+        return response()->json(['archived' => $applicants->count()]);
+    }
+
+    public function restore(int $applicantId): JsonResponse
+    {
+        $applicant = Applicant::onlyTrashed()->findOrFail($applicantId);
+
+        $applicant->restore();
+
+        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+        AuditLog::log('restore', 'applicant', $applicant->id, $fullName,
+            "Restored applicant '{$fullName}'");
+
+        return response()->json($applicant->fresh());
+    }
+
+    public function bulkRestore(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer', 'exists:applicants,id'],
+        ]);
+
+        $applicants = Applicant::onlyTrashed()
+            ->whereIn('id', $request->input('ids'))
+            ->get();
+
+        foreach ($applicants as $applicant) {
+            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+            $applicant->restore();
+            AuditLog::log('restore', 'applicant', $applicant->id, $fullName,
+                "Bulk-restored applicant '{$fullName}'");
+        }
+
+        return response()->json(['restored' => $applicants->count()]);
+    }
+
+    public function forceDestroy(int $applicantId): Response
+    {
+        $applicant = Applicant::withTrashed()->findOrFail($applicantId);
+
+        if (!$applicant->trashed()) {
+            return response()->json([
+                'message' => 'Applicant must be archived before permanent deletion.',
+            ], 422);
+        }
+
+        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+        $applicantId = $applicant->id;
+
+        if ($applicant->cv_path) {
+            Storage::disk($this->cvDisk())->delete($applicant->cv_path);
+        }
+
+        $applicant->forceDelete();
+
+        AuditLog::log('force_delete', 'applicant', $applicantId, $fullName,
+            "Permanently deleted applicant '{$fullName}'");
+
+        return response()->noContent();
+    }
+
+    public function bulkForceDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer', 'exists:applicants,id'],
+        ]);
+
+        $applicants = Applicant::onlyTrashed()
+            ->whereIn('id', $request->input('ids'))
+            ->get();
+
+        $cvDisk = $this->cvDisk();
+
+        foreach ($applicants as $applicant) {
+            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
+            if ($applicant->cv_path) {
+                Storage::disk($cvDisk)->delete($applicant->cv_path);
+            }
+            $applicant->forceDelete();
+            AuditLog::log('force_delete', 'applicant', $applicant->id, $fullName,
+                "Bulk-permanently deleted applicant '{$fullName}'");
+        }
+
+        return response()->json(['deleted' => $applicants->count()]);
+    }
+
+    public function cvDownload(int $applicantId): Response | JsonResponse
+    {
+        $applicant = Applicant::withTrashed()->findOrFail($applicantId);
+        $cvDisk = Storage::disk($this->cvDisk());
+
+        if (!$applicant->cv_path) {
+            return response()->json(['message' => 'No CV uploaded for this applicant.'], 404);
+        }
+
+        if (!$cvDisk->exists($applicant->cv_path)) {
+            return response()->json(['message' => 'CV file not found on storage.'], 404);
+        }
+
+        $mimeType  = $cvDisk->mimeType($applicant->cv_path) ?: 'application/octet-stream';
+        $extension = pathinfo($applicant->cv_path, PATHINFO_EXTENSION);
+        $filename  = $applicant->last_name . '_' . $applicant->first_name . '_CV.' . $extension;
+        $stream = $cvDisk->readStream($applicant->cv_path);
+
+        if (!is_resource($stream)) {
+            return response()->json(['message' => 'Unable to read CV from storage.'], 500);
+        }
+
+        return response()->stream(function () use ($stream): void {
+            fpassthru($stream);
+            fclose($stream);
+        }, 200, [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+        ]);
+    }
+
+    /**
+     * Apply archived filter to the query.
+     */
+    private function applyArchivedFilter($query, Request $request): void
+    {
         $archivedMode = (string) $request->input('archived', 'exclude');
         if ($archivedMode === 'only') {
             $query->onlyTrashed();
         } elseif ($archivedMode === 'with') {
             $query->withTrashed();
         }
+    }
 
+    /**
+     * Apply search filter to the query.
+     */
+    private function applySearchFilter($query, Request $request): void
+    {
         if ($request->filled('search')) {
             $search = $request->string('search');
             $query->where(function ($builder) use ($search): void {
@@ -38,8 +268,13 @@ class ApplicantController extends Controller
                     ->orWhere('permanent_address', 'like', "%{$search}%");
             });
         }
+    }
 
-        // Single status (legacy) or multi-status via comma-separated string
+    /**
+     * Apply status filter to the query.
+     */
+    private function applyStatusFilter($query, Request $request): void
+    {
         if ($request->filled('status')) {
             $statuses = array_filter(array_map('trim', explode(',', $request->string('status'))));
             if (count($statuses) === 1) {
@@ -48,7 +283,13 @@ class ApplicantController extends Controller
                 $query->whereIn('status', $statuses);
             }
         }
+    }
 
+    /**
+     * Apply field-specific filters (position, gender, education, etc.).
+     */
+    private function applyFieldFilters($query, Request $request): void
+    {
         if ($request->filled('position')) {
             $query->where('position_applied_for', $request->string('position'));
         }
@@ -92,7 +333,13 @@ class ApplicantController extends Controller
         if ($request->filled('age_max')) {
             $query->where('age', '<=', (int) $request->input('age_max'));
         }
+    }
 
+    /**
+     * Apply date range filters.
+     */
+    private function applyDateFilters($query, Request $request): void
+    {
         $startDate = $request->date('start_date');
         if ($startDate) {
             $query->whereDate('created_at', '>=', $startDate);
@@ -102,10 +349,16 @@ class ApplicantController extends Controller
         if ($endDate) {
             $query->whereDate('created_at', '<=', $endDate);
         }
+    }
 
-        $sort      = $request->input('sort', 'status');
+    /**
+     * Apply sorting and pagination to the query.
+     */
+    private function applySorting($query, Request $request): LengthAwarePaginator
+    {
+        $sort = $request->input('sort', 'status');
         $direction = $request->input('direction', 'asc');
-        $allowedSorts      = ['created_at', 'last_name', 'first_name', 'status', 'expected_salary', 'total_work_experience_years', 'age'];
+        $allowedSorts = ['created_at', 'last_name', 'first_name', 'status', 'expected_salary', 'total_work_experience_years', 'age'];
         $allowedDirections = ['asc', 'desc'];
 
         if (!in_array($sort, $allowedSorts, true)) {
@@ -117,20 +370,8 @@ class ApplicantController extends Controller
         }
 
         if ($sort === 'status') {
-            $statusOrder = "CASE status
-                WHEN 'new' THEN 1
-                WHEN 'reviewed' THEN 2
-                WHEN 'shortlisted' THEN 3
-                WHEN 'interview_scheduled' THEN 4
-                WHEN 'offer_extended' THEN 5
-                WHEN 'hired' THEN 6
-                WHEN 'rejected' THEN 7
-                WHEN 'withdrawn' THEN 8
-                ELSE 9
-            END";
-
             return $query
-                ->orderByRaw($statusOrder . ' ' . $direction)
+                ->orderByRaw($this->buildStatusOrderSQL() . ' ' . $direction)
                 ->orderBy('created_at', 'desc')
                 ->paginate($request->integer('per_page', 20));
         }
@@ -138,211 +379,22 @@ class ApplicantController extends Controller
         return $query->orderBy($sort, $direction)->paginate($request->integer('per_page', 20));
     }
 
-    public function store(Request $request)
+    /**
+     * Build the SQL CASE statement for status ordering.
+     */
+    private function buildStatusOrderSQL(): string
     {
-        $applicant = $this->createApplicant($request, false);
+        $statusOrder = config('applicants.status_order');
+        $cases = [];
+        $allowedStatuses = array_keys($statusOrder);
 
-        AuditLog::log('create', 'applicant', $applicant->id,
-            $applicant->last_name . ', ' . $applicant->first_name,
-            "Created applicant '{$applicant->last_name}, {$applicant->first_name}'");
-
-        return response()->json($applicant, 201);
-    }
-
-    public function storePublic(Request $request)
-    {
-        $antiSpamResponse = $this->runPublicAntiSpamChecks($request);
-        if ($antiSpamResponse !== null) {
-            return $antiSpamResponse;
-        }
-
-        $applicant = $this->createApplicant($request, true);
-
-        return response()->json($applicant, 201);
-    }
-
-    public function show(Applicant $applicant)
-    {
-        return $applicant;
-    }
-
-    public function update(Request $request, Applicant $applicant)
-    {
-        $previousStatus = $applicant->status;
-        $data = $this->validateApplicant($request, true);
-        $cvDisk = $this->cvDisk();
-
-        if ($request->hasFile('upload_cv')) {
-            if ($applicant->cv_path) {
-                Storage::disk($cvDisk)->delete($applicant->cv_path);
+        foreach ($statusOrder as $status => $order) {
+            if (in_array($status, $allowedStatuses, true)) {
+                $cases[] = "WHEN '{$status}' THEN {$order}";
             }
-
-            $data['cv_path'] = $request->file('upload_cv')->store('cvs', $cvDisk);
         }
 
-        unset($data['upload_cv']);
-
-        $applicant->update($data);
-
-        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-
-        if ($previousStatus !== $applicant->status) {
-            AuditLog::log('status_change', 'applicant', $applicant->id, $fullName,
-                "Status changed: {$previousStatus} → {$applicant->status} for '{$fullName}'");
-        } else {
-            AuditLog::log('update', 'applicant', $applicant->id, $fullName,
-                "Updated applicant '{$fullName}'");
-        }
-
-        return $applicant;
-    }
-
-    public function destroy(Applicant $applicant)
-    {
-        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-        $applicantId = $applicant->id;
-
-        $applicant->delete();
-
-        AuditLog::log('archive', 'applicant', $applicantId, $fullName,
-            "Archived applicant '{$fullName}'");
-
-        return response()->noContent();
-    }
-
-    public function bulkDestroy(Request $request)
-    {
-        $request->validate([
-            'ids'   => ['required', 'array', 'min:1', 'max:200'],
-            'ids.*' => ['integer', 'exists:applicants,id'],
-        ]);
-
-        $applicants = Applicant::whereIn('id', $request->input('ids'))->get();
-
-        foreach ($applicants as $applicant) {
-            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-            $applicant->delete();
-            AuditLog::log('archive', 'applicant', $applicant->id, $fullName,
-                "Bulk-archived applicant '{$fullName}'");
-        }
-
-        return response()->json(['archived' => $applicants->count()]);
-    }
-
-    public function restore(int $applicantId)
-    {
-        $applicant = Applicant::onlyTrashed()->findOrFail($applicantId);
-
-        $applicant->restore();
-
-        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-        AuditLog::log('restore', 'applicant', $applicant->id, $fullName,
-            "Restored applicant '{$fullName}'");
-
-        return response()->json($applicant->fresh());
-    }
-
-    public function bulkRestore(Request $request)
-    {
-        $request->validate([
-            'ids'   => ['required', 'array', 'min:1', 'max:200'],
-            'ids.*' => ['integer', 'exists:applicants,id'],
-        ]);
-
-        $applicants = Applicant::onlyTrashed()
-            ->whereIn('id', $request->input('ids'))
-            ->get();
-
-        foreach ($applicants as $applicant) {
-            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-            $applicant->restore();
-            AuditLog::log('restore', 'applicant', $applicant->id, $fullName,
-                "Bulk-restored applicant '{$fullName}'");
-        }
-
-        return response()->json(['restored' => $applicants->count()]);
-    }
-
-    public function forceDestroy(int $applicantId)
-    {
-        $applicant = Applicant::withTrashed()->findOrFail($applicantId);
-
-        if (!$applicant->trashed()) {
-            return response()->json([
-                'message' => 'Applicant must be archived before permanent deletion.',
-            ], 422);
-        }
-
-        $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-        $applicantId = $applicant->id;
-
-        if ($applicant->cv_path) {
-            Storage::disk($this->cvDisk())->delete($applicant->cv_path);
-        }
-
-        $applicant->forceDelete();
-
-        AuditLog::log('force_delete', 'applicant', $applicantId, $fullName,
-            "Permanently deleted applicant '{$fullName}'");
-
-        return response()->noContent();
-    }
-
-    public function bulkForceDestroy(Request $request)
-    {
-        $request->validate([
-            'ids'   => ['required', 'array', 'min:1', 'max:200'],
-            'ids.*' => ['integer', 'exists:applicants,id'],
-        ]);
-
-        $applicants = Applicant::onlyTrashed()
-            ->whereIn('id', $request->input('ids'))
-            ->get();
-
-        $cvDisk = $this->cvDisk();
-
-        foreach ($applicants as $applicant) {
-            $fullName = $applicant->last_name . ', ' . $applicant->first_name;
-            if ($applicant->cv_path) {
-                Storage::disk($cvDisk)->delete($applicant->cv_path);
-            }
-            $applicant->forceDelete();
-            AuditLog::log('force_delete', 'applicant', $applicant->id, $fullName,
-                "Bulk-permanently deleted applicant '{$fullName}'");
-        }
-
-        return response()->json(['deleted' => $applicants->count()]);
-    }
-
-    public function cvDownload(int $applicantId)
-    {
-        $applicant = Applicant::withTrashed()->findOrFail($applicantId);
-        $cvDisk = Storage::disk($this->cvDisk());
-
-        if (!$applicant->cv_path) {
-            return response()->json(['message' => 'No CV uploaded for this applicant.'], 404);
-        }
-
-        if (!$cvDisk->exists($applicant->cv_path)) {
-            return response()->json(['message' => 'CV file not found on storage.'], 404);
-        }
-
-        $mimeType  = $cvDisk->mimeType($applicant->cv_path) ?: 'application/octet-stream';
-        $extension = pathinfo($applicant->cv_path, PATHINFO_EXTENSION);
-        $filename  = $applicant->last_name . '_' . $applicant->first_name . '_CV.' . $extension;
-        $stream = $cvDisk->readStream($applicant->cv_path);
-
-        if (!is_resource($stream)) {
-            return response()->json(['message' => 'Unable to read CV from storage.'], 500);
-        }
-
-        return response()->stream(function () use ($stream): void {
-            fpassthru($stream);
-            fclose($stream);
-        }, 200, [
-            'Content-Type' => $mimeType,
-            'Content-Disposition' => 'inline; filename="' . $filename . '"',
-        ]);
+        return 'CASE status ' . implode(' ', $cases) . ' ELSE 9 END';
     }
 
     private function validateApplicant(Request $request, bool $isUpdate = false): array
@@ -475,16 +527,7 @@ class ApplicantController extends Controller
 
     private function allowedStatuses(): array
     {
-        return [
-            'new',
-            'reviewed',
-            'shortlisted',
-            'interview_scheduled',
-            'offer_extended',
-            'hired',
-            'rejected',
-            'withdrawn',
-        ];
+        return config('applicants.statuses');
     }
 
     private function cvDisk(): string
