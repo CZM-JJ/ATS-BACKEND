@@ -92,6 +92,8 @@ Route::middleware('auth.cookie')->group(function (): void {
             ->middleware('perm:canManagePositions');
         Route::patch('positions/{position}', [PositionController::class, 'update'])
             ->middleware('perm:canManagePositions');
+        Route::patch('positions/{position}/toggle', [PositionController::class, 'toggle'])
+            ->middleware('perm:canManagePositions');
         Route::delete('positions/{position}', [PositionController::class, 'destroy'])
             ->middleware('perm:canManagePositions');
 

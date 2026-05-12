@@ -41,5 +41,31 @@ return Application::configure(basePath: dirname(__DIR__))
                     'method' => request()->method(),
                 ]);
             }
+
+            // In production, never return stack traces
+            if (app()->environment('production')) {
+                if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException
+                    || $e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+                    return response()->json(['message' => 'Not found'], 404);
+                }
+                
+                if ($e instanceof \Illuminate\Auth\AuthenticationException) {
+                    return response()->json(['message' => 'Unauthenticated'], 401);
+                }
+
+                if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
+                    return response()->json(['message' => 'Unauthorized'], 403);
+                }
+
+                if ($e instanceof \Illuminate\Validation\ValidationException) {
+                    return response()->json([
+                        'message' => 'Validation failed',
+                        'errors' => $e->errors(),
+                    ], 422);
+                }
+
+                // Generic error response - never expose details in production
+                return response()->json(['message' => 'An error occurred. Please try again later.'], 500);
+            }
         });
     })->create();

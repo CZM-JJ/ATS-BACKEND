@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ApplicantController extends Controller
 {
@@ -49,7 +50,8 @@ class ApplicantController extends Controller
             return $antiSpamResponse;
         }
 
-        $applicant = $this->createApplicant($request, true);
+        // Disable notifications for public submissions to avoid mail errors on free tier
+        $applicant = $this->createApplicant($request, false);
 
         return response()->json($applicant, 201);
     }
@@ -102,7 +104,6 @@ class ApplicantController extends Controller
 
         return response()->noContent();
     }
-
     public function bulkDestroy(Request $request): JsonResponse
     {
         $request->validate([
@@ -207,35 +208,64 @@ class ApplicantController extends Controller
         return response()->json(['deleted' => $applicants->count()]);
     }
 
-    public function cvDownload(int $applicantId): Response | JsonResponse
+    public function cvDownload(int $applicantId): Response | JsonResponse | StreamedResponse
     {
         $applicant = Applicant::withTrashed()->findOrFail($applicantId);
-        $cvDisk = Storage::disk($this->cvDisk());
+        $path = $applicant->cv_path;
 
-        if (!$applicant->cv_path) {
+        if (!$path) {
             return response()->json(['message' => 'No CV uploaded for this applicant.'], 404);
         }
 
-        if (!$cvDisk->exists($applicant->cv_path)) {
+        // Try configured disk first, then fall back to common alternatives if missing.
+        $configuredDisk = $this->cvDisk();
+        $candidateDisks = array_values(array_unique(array_merge([$configuredDisk], ['public', 'local', 's3'])));
+
+        $cvDisk = null;
+        $servingDiskName = null;
+        foreach ($candidateDisks as $diskName) {
+            try {
+                $d = Storage::disk($diskName);
+                if ($d->exists($path)) {
+                    $cvDisk = $d;
+                    $servingDiskName = $diskName;
+                    break;
+                }
+            } catch (\Throwable $e) {
+                // ignore and try next disk
+            }
+        }
+
+        if ($cvDisk === null) {
             return response()->json(['message' => 'CV file not found on storage.'], 404);
         }
 
-        $mimeType  = $cvDisk->mimeType($applicant->cv_path) ?: 'application/octet-stream';
-        $extension = pathinfo($applicant->cv_path, PATHINFO_EXTENSION);
-        $filename  = $applicant->last_name . '_' . $applicant->first_name . '_CV.' . $extension;
-        $stream = $cvDisk->readStream($applicant->cv_path);
+        $mimeType  = $cvDisk->mimeType($path) ?: 'application/octet-stream';
+        $extension = pathinfo($path, PATHINFO_EXTENSION);
+        
+        // Sanitize filename to prevent header injection
+        $baseName  = str_replace(['"', "'", "\n", "\r"], '', $applicant->last_name . '_' . $applicant->first_name);
+        $filename  = $baseName . '_CV.' . $extension;
+        $stream = $cvDisk->readStream($path);
 
         if (!is_resource($stream)) {
             return response()->json(['message' => 'Unable to read CV from storage.'], 500);
         }
 
+        // Add a small header to indicate which disk served the file for debugging.
+        $headers = [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+        ];
+
+        if ($servingDiskName) {
+            $headers['X-CV-Storage-Disk'] = $servingDiskName;
+        }
+
         return response()->stream(function () use ($stream): void {
             fpassthru($stream);
             fclose($stream);
-        }, 200, [
-            'Content-Type' => $mimeType,
-            'Content-Disposition' => 'inline; filename="' . $filename . '"',
-        ]);
+        }, 200, $headers);
     }
 
     /**
